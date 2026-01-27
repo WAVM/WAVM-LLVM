@@ -1,0 +1,2 @@
+# Force LF line endings for patch files (required for git apply)
+*.patch text eol=lf

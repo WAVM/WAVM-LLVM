@@ -1,0 +1,306 @@
+name: Build LLVM
+
+on:
+  push:
+    branches: ['release/*']
+  pull_request:
+    branches: ['release/*']
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create GitHub release'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  LLVM_VERSION: '21'
+
+jobs:
+  # Linux builds using manylinux_2_28 container
+  linux:
+    runs-on: ubuntu-latest
+    container: ghcr.io/wavm/builder-linux-x64:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: LTO
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=Release
+              -DLLVM_ENABLE_PROJECTS="clang;lld"
+              -DLLVM_ENABLE_LTO=Thin
+              -DCLANG_ENABLE_STATIC_ANALYZER=OFF
+              -DCLANG_ENABLE_ARCMT=OFF
+          - config: RelWithDebInfo
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Debug
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=Debug
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Checked
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_ENABLE_ASSERTIONS=ON
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Sanitized
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_ENABLE_ASSERTIONS=ON
+              -DLLVM_USE_SANITIZE_COVERAGE=ON
+              -DLLVM_USE_SANITIZER="Address;Undefined"
+              -DLLVM_INCLUDE_TOOLS=OFF
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone LLVM
+        run: |
+          LLVM_COMMIT=$(cat LLVM_COMMIT)
+          git clone --depth=1 https://github.com/llvm/llvm-project.git
+          cd llvm-project
+          git fetch --depth=1 origin $LLVM_COMMIT
+          git checkout $LLVM_COMMIT
+
+      - name: Apply patches
+        run: |
+          cd llvm-project
+          for patch in ../patches/*.patch; do
+            [ -f "$patch" ] && git apply "$patch"
+          done
+
+      - name: Configure LLVM
+        run: |
+          cmake -S llvm-project/llvm -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_FLAGS="-fvisibility=hidden" \
+            -DCMAKE_CXX_FLAGS="-fvisibility=hidden" \
+            -DCMAKE_INSTALL_PREFIX=$PWD/install \
+            -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
+            -DLLVM_INCLUDE_DOCS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_OPTIMIZED_TABLEGEN=ON \
+            ${{ matrix.cmake_args }}
+
+      - name: Build LLVM
+        run: ninja -C build install
+
+      - name: Create archive
+        run: |
+          cd install
+          tar -cJf ../llvm-${{ env.LLVM_VERSION }}-linux-x64-${{ matrix.config }}.tar.xz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-${{ env.LLVM_VERSION }}-linux-x64-${{ matrix.config }}
+          path: llvm-${{ env.LLVM_VERSION }}-linux-x64-${{ matrix.config }}.tar.xz
+          retention-days: 7
+
+  # Windows builds
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: LTO
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=Release
+              -DLLVM_ENABLE_PROJECTS="clang;lld"
+              -DLLVM_ENABLE_LTO=Thin
+              -DCMAKE_LINKER=lld-link
+              -DCLANG_ENABLE_STATIC_ANALYZER=OFF
+              -DCLANG_ENABLE_ARCMT=OFF
+          - config: RelWithDebInfo
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Debug
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=Debug
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Checked
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_ENABLE_ASSERTIONS=ON
+              -DLLVM_INCLUDE_TOOLS=OFF
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone LLVM
+        run: |
+          $LLVM_COMMIT = Get-Content LLVM_COMMIT -Raw
+          $LLVM_COMMIT = $LLVM_COMMIT.Trim()
+          git clone --depth=1 https://github.com/llvm/llvm-project.git
+          cd llvm-project
+          git fetch --depth=1 origin $LLVM_COMMIT
+          git checkout $LLVM_COMMIT
+
+      - name: Apply patches
+        run: |
+          cd llvm-project
+          Get-ChildItem ../patches/*.patch | ForEach-Object { git apply $_.FullName }
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure LLVM
+        run: |
+          cmake -S llvm-project/llvm -B build -G Ninja `
+            -DCMAKE_C_COMPILER=cl `
+            -DCMAKE_CXX_COMPILER=cl `
+            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install `
+            -DLLVM_TARGETS_TO_BUILD="X86;AArch64" `
+            -DLLVM_INCLUDE_DOCS=OFF `
+            -DLLVM_INCLUDE_EXAMPLES=OFF `
+            -DLLVM_INCLUDE_TESTS=OFF `
+            -DLLVM_INCLUDE_BENCHMARKS=OFF `
+            -DLLVM_ENABLE_ZLIB=OFF `
+            -DLLVM_ENABLE_ZSTD=OFF `
+            -DLLVM_ENABLE_TERMINFO=OFF `
+            -DLLVM_OPTIMIZED_TABLEGEN=ON `
+            ${{ matrix.cmake_args }}
+
+      - name: Build LLVM
+        run: ninja -C build install
+
+      - name: Create archive
+        run: |
+          cd install
+          7z a -tzip ../llvm-${{ env.LLVM_VERSION }}-windows-x64-${{ matrix.config }}.zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-${{ env.LLVM_VERSION }}-windows-x64-${{ matrix.config }}
+          path: llvm-${{ env.LLVM_VERSION }}-windows-x64-${{ matrix.config }}.zip
+          retention-days: 7
+
+  # macOS builds
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: LTO
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=Release
+              -DLLVM_ENABLE_PROJECTS="clang;lld"
+              -DLLVM_ENABLE_LTO=Thin
+              -DCLANG_ENABLE_STATIC_ANALYZER=OFF
+              -DCLANG_ENABLE_ARCMT=OFF
+          - config: RelWithDebInfo
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Debug
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=Debug
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Checked
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_ENABLE_ASSERTIONS=ON
+              -DLLVM_INCLUDE_TOOLS=OFF
+          - config: Sanitized
+            cmake_args: >
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              -DLLVM_ENABLE_ASSERTIONS=ON
+              -DLLVM_USE_SANITIZE_COVERAGE=ON
+              -DLLVM_USE_SANITIZER="Address;Undefined"
+              -DLLVM_INCLUDE_TOOLS=OFF
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone LLVM
+        run: |
+          LLVM_COMMIT=$(cat LLVM_COMMIT)
+          git clone --depth=1 https://github.com/llvm/llvm-project.git
+          cd llvm-project
+          git fetch --depth=1 origin $LLVM_COMMIT
+          git checkout $LLVM_COMMIT
+
+      - name: Apply patches
+        run: |
+          cd llvm-project
+          for patch in ../patches/*.patch; do
+            [ -f "$patch" ] && git apply "$patch"
+          done
+
+      - name: Install ninja
+        run: brew install ninja
+
+      - name: Configure LLVM
+        run: |
+          cmake -S llvm-project/llvm -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_FLAGS="-fvisibility=hidden" \
+            -DCMAKE_CXX_FLAGS="-fvisibility=hidden" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DCMAKE_INSTALL_PREFIX=$PWD/install \
+            -DLLVM_TARGETS_TO_BUILD="X86;AArch64" \
+            -DLLVM_INCLUDE_DOCS=OFF \
+            -DLLVM_INCLUDE_EXAMPLES=OFF \
+            -DLLVM_INCLUDE_TESTS=OFF \
+            -DLLVM_INCLUDE_BENCHMARKS=OFF \
+            -DLLVM_ENABLE_ZLIB=OFF \
+            -DLLVM_ENABLE_ZSTD=OFF \
+            -DLLVM_ENABLE_TERMINFO=OFF \
+            -DLLVM_OPTIMIZED_TABLEGEN=ON \
+            ${{ matrix.cmake_args }}
+
+      - name: Build LLVM
+        run: ninja -C build install
+
+      - name: Create archive
+        run: |
+          cd install
+          tar -cJf ../llvm-${{ env.LLVM_VERSION }}-macos-arm64-${{ matrix.config }}.tar.xz .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llvm-${{ env.LLVM_VERSION }}-macos-arm64-${{ matrix.config }}
+          path: llvm-${{ env.LLVM_VERSION }}-macos-arm64-${{ matrix.config }}.tar.xz
+          retention-days: 7
+
+  # Create GitHub release
+  release:
+    needs: [linux, windows, macos]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Get release tag
+        id: tag
+        run: |
+          LLVM_COMMIT=$(cat LLVM_COMMIT)
+          # Use short commit hash in tag
+          echo "tag=${LLVM_COMMIT:0:12}" >> $GITHUB_OUTPUT
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: LLVM ${{ env.LLVM_VERSION }} (${{ steps.tag.outputs.tag }})
+          draft: false
+          prerelease: false
+          files: artifacts/**/*
