@@ -166,6 +166,7 @@ jobs:
             -DLLVM_ENABLE_ZLIB=OFF `
             -DLLVM_ENABLE_ZSTD=OFF `
             -DLLVM_ENABLE_TERMINFO=OFF `
+            -DLLVM_ENABLE_DIA_SDK=OFF `
             -DLLVM_OPTIMIZED_TABLEGEN=ON `
             ${{ matrix.cmake_args }}
 
