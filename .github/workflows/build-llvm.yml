@@ -29,6 +29,7 @@ jobs:
             cmake_args: >
               -DCMAKE_BUILD_TYPE=Release
               -DLLVM_ENABLE_PROJECTS="clang;lld"
+              -DLLVM_ENABLE_RUNTIMES="compiler-rt"
               -DLLVM_ENABLE_LTO=Thin
               -DCLANG_ENABLE_STATIC_ANALYZER=OFF
               -DCLANG_ENABLE_ARCMT=OFF
@@ -115,6 +116,7 @@ jobs:
             cmake_args: >
               -DCMAKE_BUILD_TYPE=Release
               -DLLVM_ENABLE_PROJECTS="clang;lld"
+              -DLLVM_ENABLE_RUNTIMES="compiler-rt"
               -DLLVM_ENABLE_LTO=Thin
               -DCMAKE_LINKER=lld-link
               -DCLANG_ENABLE_STATIC_ANALYZER=OFF
@@ -196,6 +198,7 @@ jobs:
             cmake_args: >
               -DCMAKE_BUILD_TYPE=Release
               -DLLVM_ENABLE_PROJECTS="clang;lld"
+              -DLLVM_ENABLE_RUNTIMES="compiler-rt"
               -DLLVM_ENABLE_LTO=Thin
               -DCLANG_ENABLE_STATIC_ANALYZER=OFF
               -DCLANG_ENABLE_ARCMT=OFF
