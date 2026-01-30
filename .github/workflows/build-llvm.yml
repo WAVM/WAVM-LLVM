@@ -194,14 +194,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # LTO config uses two-stage bootstrap to avoid libLTO.dylib conflicts:
+          # Stage 1: Build clang without LTO (uses system compiler)
+          # Stage 2: Build clang with ThinLTO using stage 1 clang
           - config: LTO
+            bootstrap: true
             cmake_args: >
               -DCMAKE_BUILD_TYPE=Release
               -DLLVM_ENABLE_PROJECTS="clang;lld"
-              -DLLVM_ENABLE_RUNTIMES="compiler-rt"
-              -DLLVM_ENABLE_LTO=Thin
+              -DCLANG_ENABLE_BOOTSTRAP=ON
               -DCLANG_ENABLE_STATIC_ANALYZER=OFF
               -DCLANG_ENABLE_ARCMT=OFF
+              -DCLANG_BOOTSTRAP_TARGETS="install-distribution"
+              -DBOOTSTRAP_CMAKE_BUILD_TYPE=Release
+              -DBOOTSTRAP_LLVM_ENABLE_LTO=Thin
+              -DBOOTSTRAP_LLVM_ENABLE_PROJECTS="clang;lld"
+              -DBOOTSTRAP_LLVM_ENABLE_RUNTIMES="compiler-rt"
+              -DBOOTSTRAP_CLANG_ENABLE_STATIC_ANALYZER=OFF
+              -DBOOTSTRAP_CLANG_ENABLE_ARCMT=OFF
+              -DBOOTSTRAP_LLVM_DISTRIBUTION_COMPONENTS="clang;lld;clang-resource-headers;builtins;runtimes"
           - config: RelWithDebInfo
             cmake_args: >
               -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -245,6 +256,23 @@ jobs:
 
       - name: Configure LLVM
         run: |
+          # For bootstrap builds, also pass common options to stage 2
+          BOOTSTRAP_ARGS=""
+          if [ "${{ matrix.bootstrap }}" = "true" ]; then
+            BOOTSTRAP_ARGS=" \
+              -DBOOTSTRAP_CMAKE_C_FLAGS=-fvisibility=hidden \
+              -DBOOTSTRAP_CMAKE_CXX_FLAGS=-fvisibility=hidden \
+              -DBOOTSTRAP_CMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+              -DBOOTSTRAP_CMAKE_INSTALL_PREFIX=$PWD/install \
+              '-DBOOTSTRAP_LLVM_TARGETS_TO_BUILD=X86;AArch64' \
+              -DBOOTSTRAP_LLVM_INCLUDE_DOCS=OFF \
+              -DBOOTSTRAP_LLVM_INCLUDE_EXAMPLES=OFF \
+              -DBOOTSTRAP_LLVM_INCLUDE_TESTS=OFF \
+              -DBOOTSTRAP_LLVM_INCLUDE_BENCHMARKS=OFF \
+              -DBOOTSTRAP_LLVM_ENABLE_ZLIB=OFF \
+              -DBOOTSTRAP_LLVM_ENABLE_ZSTD=OFF \
+              -DBOOTSTRAP_LLVM_ENABLE_TERMINFO=OFF"
+          fi
           cmake -S llvm-project/llvm -B build -G Ninja \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
@@ -261,10 +289,16 @@ jobs:
             -DLLVM_ENABLE_ZSTD=OFF \
             -DLLVM_ENABLE_TERMINFO=OFF \
             -DLLVM_OPTIMIZED_TABLEGEN=ON \
+            $BOOTSTRAP_ARGS \
             ${{ matrix.cmake_args }}
 
       - name: Build LLVM
-        run: ninja -C build install
+        run: |
+          if [ "${{ matrix.bootstrap }}" = "true" ]; then
+            ninja -C build stage2-install-distribution
+          else
+            ninja -C build install
+          fi
 
       - name: Create archive
         run: |
