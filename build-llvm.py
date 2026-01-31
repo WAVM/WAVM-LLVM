@@ -45,7 +45,14 @@ import platform
 import shutil
 import subprocess
 import sys
+from enum import Enum, auto
 from pathlib import Path
+
+
+class LTOStages(Enum):
+    STAGE1_ONLY = auto()
+    ALL = auto()
+
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 MARKER_FILE = ".wavm-llvm-build"
@@ -232,6 +239,12 @@ def get_cmake_config(plat, config, stage=None):
         stage_file = cmake_dir / "platform" / plat / f"lto-stage{stage}.cmake"
         if stage_file.exists():
             cache_files.append(stage_file)
+    elif config == "LTO-stage1":
+        # Stage 1 only (for split builds)
+        cache_files.append(cmake_dir / "lto-stage1-common.cmake")
+        stage_file = cmake_dir / "platform" / plat / "lto-stage1.cmake"
+        if stage_file.exists():
+            cache_files.append(stage_file)
     elif config in ("RelWithDebInfo", "Debug", "Checked", "Sanitized"):
         cache_files.append(cmake_dir / "non-lto-common.cmake")
         cache_files.append(cmake_dir / "config" / f"{config}.cmake")
@@ -306,33 +319,51 @@ def build_ninja(build_dir, targets=None):
     run_cmd(cmd)
 
 
-def build_lto(work_dir, llvm_dir, plat, install_dir, clean):
-    """Build LTO configuration (two-stage bootstrap)."""
+def build_lto(work_dir, llvm_dir, plat, install_stage2, clean, stages, llvm_commit, patches_hash):
+    """Build LTO configuration (two-stage bootstrap).
+
+    stages controls which stages to build:
+      - STAGE1_ONLY: Only build the bootstrap toolchain
+      - ALL: Build both stages (skipping stage 1 if already present)
+    """
     build_stage1 = work_dir / "build-LTO-stage1"
+    install_stage1 = work_dir / "install-LTO-stage1"
     build_stage2 = work_dir / "build-LTO-stage2"
 
+    # Compute cmake hash for stage 1 only
+    stage1_cmake_hash = get_cmake_hash(plat, "LTO-stage1")
+
     if clean:
-        for d in [build_stage1, build_stage2, install_dir]:
-            if d.exists():
+        dirs_to_clean = [build_stage1, install_stage1]
+        if stages == LTOStages.ALL:
+            dirs_to_clean.extend([build_stage2, install_stage2])
+        for d in dirs_to_clean:
+            if d and d.exists():
                 print(f"Removing {d}")
                 shutil.rmtree(d)
 
-    # Stage 1: Build toolchain
-    configure_cmake(llvm_dir, build_stage1, install_dir, plat, "LTO", stage=1)
+    # Stage 1: Build and install toolchain (skip if marker indicates it's already built)
+    stage1_valid = check_build_marker(
+        install_stage1, llvm_commit, patches_hash, stage1_cmake_hash, "LTO-stage1", plat
+    )
 
-    stage1_targets = ["clang", "lld", "llvm-ar", "llvm-ranlib"]
-    if plat == "macos":
-        stage1_targets.append("llvm-libtool-darwin")
-    elif plat == "windows":
-        # lld-link is built as part of lld, but we also need llvm-lib for static libraries
-        stage1_targets.append("llvm-lib")
+    if stage1_valid:
+        print(f"\n=== Stage 1 already built, skipping ===")
+    else:
+        configure_cmake(llvm_dir, build_stage1, install_stage1, plat, "LTO", stage=1)
 
-    print(f"\n=== Building Stage 1 ({', '.join(stage1_targets)}) ===")
-    build_ninja(build_stage1, stage1_targets)
+        print(f"\n=== Building Stage 1 ===")
+        build_ninja(build_stage1)
+
+        # Write marker for stage 1
+        write_build_marker(install_stage1, llvm_commit, patches_hash, stage1_cmake_hash, "LTO-stage1", plat)
+
+    if stages == LTOStages.STAGE1_ONLY:
+        return
 
     # Stage 2: Build with LTO using stage 1 toolchain
-    stage1_bin = build_stage1 / "bin"
-    configure_cmake(llvm_dir, build_stage2, install_dir, plat, "LTO", stage=2, stage1_bin_dir=stage1_bin)
+    stage1_bin = install_stage1 / "bin"
+    configure_cmake(llvm_dir, build_stage2, install_stage2, plat, "LTO", stage=2, stage1_bin_dir=stage1_bin)
 
     print("\n=== Building Stage 2 ===")
     build_ninja(build_stage2)
@@ -390,8 +421,8 @@ int main() {
 def main():
     parser = argparse.ArgumentParser(description="Build LLVM from source")
     parser.add_argument("--config", required=True,
-                        choices=["LTO", "RelWithDebInfo", "Debug", "Checked", "Sanitized"],
-                        help="Build configuration")
+                        choices=["LTO", "LTO-stage1", "RelWithDebInfo", "Debug", "Checked", "Sanitized"],
+                        help="Build configuration (LTO-stage1 builds only the bootstrap toolchain)")
     parser.add_argument("--work-dir", required=True, type=Path,
                         help="Working directory for build")
     parser.add_argument("--install-dir", type=Path,
@@ -408,25 +439,29 @@ def main():
     work_dir = args.work_dir.resolve()
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    # Default install dir includes config name for multi-config support
-    install_dir = args.install_dir.resolve() if args.install_dir else work_dir / f"install-{args.config}"
-
     plat = args.platform or detect_platform()
     llvm_commit = get_llvm_commit()
     patches_hash = get_patches_hash()
     cmake_hash = get_cmake_hash(plat, args.config)
 
+    # LTO-stage1 doesn't produce an install directory
+    if args.config == "LTO-stage1":
+        install_dir = None
+    else:
+        install_dir = args.install_dir.resolve() if args.install_dir else work_dir / f"install-{args.config}"
+
     print(f"Platform: {plat}")
     print(f"Config: {args.config}")
     print(f"Work directory: {work_dir}")
-    print(f"Install directory: {install_dir}")
+    if install_dir:
+        print(f"Install directory: {install_dir}")
     print(f"LLVM commit: {llvm_commit[:12]}")
     if patches_hash:
         print(f"Patches hash: {patches_hash}")
     print(f"CMake hash: {cmake_hash}")
 
-    # Check if already built with same config
-    if not args.clean and check_build_marker(install_dir, llvm_commit, patches_hash, cmake_hash, args.config, plat):
+    # Check if already built with same config (skip for LTO-stage1 which has no install dir)
+    if install_dir and not args.clean and check_build_marker(install_dir, llvm_commit, patches_hash, cmake_hash, args.config, plat):
         print(f"\n=== Already built, skipping (use --clean to rebuild) ===")
         if args.test:
             test_toolchain(install_dir, plat)
@@ -439,19 +474,25 @@ def main():
     apply_patches(llvm_dir)
 
     # Build
-    if args.config == "LTO":
-        build_lto(work_dir, llvm_dir, plat, install_dir, args.clean)
+    if args.config == "LTO-stage1":
+        build_lto(work_dir, llvm_dir, plat, None, args.clean, LTOStages.STAGE1_ONLY, llvm_commit, patches_hash)
+    elif args.config == "LTO":
+        build_lto(work_dir, llvm_dir, plat, install_dir, args.clean, LTOStages.ALL, llvm_commit, patches_hash)
     else:
         build_single_stage(work_dir, llvm_dir, plat, args.config, install_dir, args.clean)
 
-    # Write marker for future incremental builds
-    write_build_marker(install_dir, llvm_commit, patches_hash, cmake_hash, args.config, plat)
+    # Write marker for future incremental builds (skip for LTO-stage1)
+    if install_dir:
+        write_build_marker(install_dir, llvm_commit, patches_hash, cmake_hash, args.config, plat)
 
-    if args.test:
-        test_toolchain(install_dir, plat)
+        if args.test:
+            test_toolchain(install_dir, plat)
 
-    print(f"\n=== Build complete ===")
-    print(f"Installation: {install_dir}")
+        print(f"\n=== Build complete ===")
+        print(f"Installation: {install_dir}")
+    else:
+        print(f"\n=== Build complete ===")
+        print(f"Stage 1 toolchain: {work_dir / 'install-LTO-stage1' / 'bin'}")
 
 
 if __name__ == "__main__":
