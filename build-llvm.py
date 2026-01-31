@@ -48,8 +48,11 @@ import sys
 from enum import Enum, auto
 from pathlib import Path
 
-# Force line-buffered stdout for real-time output in CI
-sys.stdout.reconfigure(line_buffering=True)
+
+def unbuffered_print(msg):
+    """Print a message and flush stdout for real-time output in CI."""
+    print(msg)
+    sys.stdout.flush()
 
 
 class LTOStages(Enum):
@@ -66,7 +69,7 @@ BUILD_SCRIPT_VERSION = 1
 
 def run_cmd(cmd, cwd=None, check=True, capture=False):
     """Run a command, printing it first."""
-    print(f"+ {' '.join(str(c) for c in cmd)}")
+    unbuffered_print(f"+ {' '.join(str(c) for c in cmd)}")
     if capture:
         return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
     return subprocess.run(cmd, cwd=cwd, check=check)
@@ -124,13 +127,13 @@ def check_build_marker(install_dir, llvm_commit, patches_hash, cmake_hash, confi
     """
     marker_path = install_dir / MARKER_FILE
     if not marker_path.exists():
-        print(f"Rebuild needed: no build marker at {marker_path}")
+        unbuffered_print(f"Rebuild needed: no build marker at {marker_path}")
         return False
 
     try:
         marker = json.loads(marker_path.read_text())
     except json.JSONDecodeError as e:
-        print(f"Rebuild needed: invalid build marker ({e})")
+        unbuffered_print(f"Rebuild needed: invalid build marker ({e})")
         return False
 
     mismatches = []
@@ -148,7 +151,7 @@ def check_build_marker(install_dir, llvm_commit, patches_hash, cmake_hash, confi
         mismatches.append(f"platform: {marker.get('platform', '<missing>')} -> {plat}")
 
     if mismatches:
-        print(f"Rebuild needed: {', '.join(mismatches)}")
+        unbuffered_print(f"Rebuild needed: {', '.join(mismatches)}")
         return False
 
     return True
@@ -174,14 +177,14 @@ def clone_or_update_llvm(work_dir, llvm_commit):
 
     current_commit = get_llvm_head_commit(llvm_dir)
     if current_commit == llvm_commit:
-        print(f"LLVM already at commit {llvm_commit[:12]}, skipping clone")
+        unbuffered_print(f"LLVM already at commit {llvm_commit[:12]}, skipping clone")
         return llvm_dir
 
     if llvm_dir.exists():
-        print(f"LLVM at wrong commit ({current_commit[:12] if current_commit else 'unknown'}), removing...")
+        unbuffered_print(f"LLVM at wrong commit ({current_commit[:12] if current_commit else 'unknown'}), removing...")
         shutil.rmtree(llvm_dir)
 
-    print(f"\n=== Cloning LLVM (commit: {llvm_commit[:12]}) ===")
+    unbuffered_print(f"\n=== Cloning LLVM (commit: {llvm_commit[:12]}) ===")
     run_cmd(["git", "clone", "--depth=1", "https://github.com/llvm/llvm-project.git"], cwd=work_dir)
     run_cmd(["git", "fetch", "--depth=1", "origin", llvm_commit], cwd=llvm_dir)
     run_cmd(["git", "checkout", llvm_commit], cwd=llvm_dir)
@@ -197,25 +200,25 @@ def apply_patches(llvm_dir):
     """
     patches_dir = SCRIPT_DIR / "patches"
     if not patches_dir.exists():
-        print("No patches directory found, skipping patches")
+        unbuffered_print("No patches directory found, skipping patches")
         return
 
     patches = sorted(patches_dir.glob("*.patch"))
     if not patches:
-        print("No patches found, skipping")
+        unbuffered_print("No patches found, skipping")
         return
 
     # Always revert to clean state first - this handles:
     # - Patches that were partially applied before an abort
     # - Patches that changed since last build
     # - Multiple configs sharing the same llvm-project
-    print(f"\n=== Reverting llvm-project to clean state ===")
+    unbuffered_print(f"\n=== Reverting llvm-project to clean state ===")
     run_cmd(["git", "checkout", "--", "."], cwd=llvm_dir)
     run_cmd(["git", "clean", "-fd"], cwd=llvm_dir)
 
-    print(f"\n=== Applying {len(patches)} patches ===")
+    unbuffered_print(f"\n=== Applying {len(patches)} patches ===")
     for patch in patches:
-        print(f"Applying: {patch.name}")
+        unbuffered_print(f"Applying: {patch.name}")
         run_cmd(["git", "apply", str(patch)], cwd=llvm_dir)
 
 
@@ -290,7 +293,7 @@ def cmake_path(path):
 
 def configure_cmake(llvm_dir, build_dir, install_dir, plat, config, stage=None, stage1_bin_dir=None):
     """Configure LLVM with cmake."""
-    print(f"\n=== Configuring {'Stage ' + str(stage) if stage else config} ===")
+    unbuffered_print(f"\n=== Configuring {'Stage ' + str(stage) if stage else config} ===")
 
     cmake_cmd = [
         "cmake",
@@ -342,7 +345,7 @@ def build_lto(work_dir, llvm_dir, plat, install_stage2, clean, stages, llvm_comm
             dirs_to_clean.extend([build_stage2, install_stage2])
         for d in dirs_to_clean:
             if d and d.exists():
-                print(f"Removing {d}")
+                unbuffered_print(f"Removing {d}")
                 shutil.rmtree(d)
 
     # Stage 1: Build and install toolchain (skip if marker indicates it's already built)
@@ -351,11 +354,11 @@ def build_lto(work_dir, llvm_dir, plat, install_stage2, clean, stages, llvm_comm
     )
 
     if stage1_valid:
-        print(f"\n=== Stage 1 already built, skipping ===")
+        unbuffered_print(f"\n=== Stage 1 already built, skipping ===")
     else:
         configure_cmake(llvm_dir, build_stage1, install_stage1, plat, "LTO", stage=1)
 
-        print(f"\n=== Building Stage 1 ===")
+        unbuffered_print(f"\n=== Building Stage 1 ===")
         build_ninja(build_stage1)
 
         # Write marker for stage 1
@@ -368,7 +371,7 @@ def build_lto(work_dir, llvm_dir, plat, install_stage2, clean, stages, llvm_comm
     stage1_bin = install_stage1 / "bin"
     configure_cmake(llvm_dir, build_stage2, install_stage2, plat, "LTO", stage=2, stage1_bin_dir=stage1_bin)
 
-    print("\n=== Building Stage 2 ===")
+    unbuffered_print("\n=== Building Stage 2 ===")
     build_ninja(build_stage2)
 
 
@@ -379,18 +382,18 @@ def build_single_stage(work_dir, llvm_dir, plat, config, install_dir, clean):
     if clean:
         for d in [build_dir, install_dir]:
             if d.exists():
-                print(f"Removing {d}")
+                unbuffered_print(f"Removing {d}")
                 shutil.rmtree(d)
 
     configure_cmake(llvm_dir, build_dir, install_dir, plat, config)
 
-    print(f"\n=== Building {config} ===")
+    unbuffered_print(f"\n=== Building {config} ===")
     build_ninja(build_dir)
 
 
 def test_toolchain(install_dir, plat):
     """Test the built toolchain by compiling a simple program."""
-    print("\n=== Testing toolchain ===")
+    unbuffered_print("\n=== Testing toolchain ===")
 
     test_c = install_dir / "test.cpp"
     test_exe = install_dir / ("test.exe" if plat == "windows" else "test")
@@ -418,7 +421,7 @@ int main() {
     test_c.unlink()
     test_exe.unlink()
 
-    print("Toolchain test passed!")
+    unbuffered_print("Toolchain test passed!")
 
 
 def main():
@@ -453,19 +456,19 @@ def main():
     else:
         install_dir = args.install_dir.resolve() if args.install_dir else work_dir / f"install-{args.config}"
 
-    print(f"Platform: {plat}")
-    print(f"Config: {args.config}")
-    print(f"Work directory: {work_dir}")
+    unbuffered_print(f"Platform: {plat}")
+    unbuffered_print(f"Config: {args.config}")
+    unbuffered_print(f"Work directory: {work_dir}")
     if install_dir:
-        print(f"Install directory: {install_dir}")
-    print(f"LLVM commit: {llvm_commit[:12]}")
+        unbuffered_print(f"Install directory: {install_dir}")
+    unbuffered_print(f"LLVM commit: {llvm_commit[:12]}")
     if patches_hash:
-        print(f"Patches hash: {patches_hash}")
-    print(f"CMake hash: {cmake_hash}")
+        unbuffered_print(f"Patches hash: {patches_hash}")
+    unbuffered_print(f"CMake hash: {cmake_hash}")
 
     # Check if already built with same config (skip for LTO-stage1 which has no install dir)
     if install_dir and not args.clean and check_build_marker(install_dir, llvm_commit, patches_hash, cmake_hash, args.config, plat):
-        print(f"\n=== Already built, skipping (use --clean to rebuild) ===")
+        unbuffered_print(f"\n=== Already built, skipping (use --clean to rebuild) ===")
         if args.test:
             test_toolchain(install_dir, plat)
         return
@@ -491,11 +494,11 @@ def main():
         if args.test:
             test_toolchain(install_dir, plat)
 
-        print(f"\n=== Build complete ===")
-        print(f"Installation: {install_dir}")
+        unbuffered_print(f"\n=== Build complete ===")
+        unbuffered_print(f"Installation: {install_dir}")
     else:
-        print(f"\n=== Build complete ===")
-        print(f"Stage 1 toolchain: {work_dir / 'install-LTO-stage1' / 'bin'}")
+        unbuffered_print(f"\n=== Build complete ===")
+        unbuffered_print(f"Stage 1 toolchain: {work_dir / 'install-LTO-stage1' / 'bin'}")
 
 
 if __name__ == "__main__":
