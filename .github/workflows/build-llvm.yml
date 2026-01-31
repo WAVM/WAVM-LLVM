@@ -52,6 +52,7 @@ jobs:
         with:
           name: lto-stage1-${{ matrix.artifact_suffix }}
           path: ${{ env.WORK_DIR }}/install-LTO-stage1/
+          include-hidden-files: true
           retention-days: 1
 
   # LTO Stage 2: Build with LTO using stage 1 toolchain
@@ -106,6 +107,7 @@ jobs:
         with:
           name: llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-LTO
           path: ${{ env.WORK_DIR }}/llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-LTO.${{ matrix.archive_ext }}
+          include-hidden-files: true
           retention-days: 7
 
   # Non-LTO builds
@@ -157,6 +159,7 @@ jobs:
         with:
           name: llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-${{ matrix.config }}
           path: ${{ env.WORK_DIR }}/llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-${{ matrix.config }}.${{ matrix.archive_ext }}
+          include-hidden-files: true
           retention-days: 7
 
   # Create GitHub release
