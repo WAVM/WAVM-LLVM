@@ -48,6 +48,9 @@ import sys
 from enum import Enum, auto
 from pathlib import Path
 
+# Force line-buffered stdout for real-time output in CI
+sys.stdout.reconfigure(line_buffering=True)
+
 
 class LTOStages(Enum):
     STAGE1_ONLY = auto()
