@@ -90,6 +90,10 @@ jobs:
           name: lto-stage1-${{ matrix.artifact_suffix }}
           path: ${{ env.WORK_DIR }}/install-LTO-stage1/
 
+      - name: Restore execute permissions
+        if: matrix.os != 'windows'
+        run: chmod +x ${{ env.WORK_DIR }}/install-LTO-stage1/bin/*
+
       - name: Setup MSVC
         if: matrix.os == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
