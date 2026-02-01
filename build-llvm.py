@@ -315,16 +315,6 @@ def configure_cmake(llvm_dir, build_dir, install_dir, plat, config, stage=None, 
     run_cmd(cmake_cmd)
 
 
-def build_ninja(build_dir, targets=None):
-    """Build with ninja."""
-    cmd = ["ninja", "-C", str(build_dir)]
-    if targets:
-        cmd.extend(targets)
-    else:
-        cmd.append("install")
-    run_cmd(cmd)
-
-
 def build_lto(work_dir, llvm_dir, plat, install_stage2, clean, stages, llvm_commit, patches_hash):
     """Build LTO configuration (two-stage bootstrap).
 
@@ -359,7 +349,7 @@ def build_lto(work_dir, llvm_dir, plat, install_stage2, clean, stages, llvm_comm
         configure_cmake(llvm_dir, build_stage1, install_stage1, plat, "LTO", stage=1)
 
         unbuffered_print(f"\n=== Building Stage 1 ===")
-        build_ninja(build_stage1)
+        run_cmd(["ninja", "-C", str(build_stage1), "install-distribution"])
 
         # Write marker for stage 1
         write_build_marker(install_stage1, llvm_commit, patches_hash, stage1_cmake_hash, "LTO-stage1", plat)
@@ -372,7 +362,7 @@ def build_lto(work_dir, llvm_dir, plat, install_stage2, clean, stages, llvm_comm
     configure_cmake(llvm_dir, build_stage2, install_stage2, plat, "LTO", stage=2, stage1_bin_dir=stage1_bin)
 
     unbuffered_print("\n=== Building Stage 2 ===")
-    build_ninja(build_stage2)
+    run_cmd(["ninja", "-C", str(build_stage2), "install-distribution"])
 
 
 def build_single_stage(work_dir, llvm_dir, plat, config, install_dir, clean):
@@ -388,7 +378,7 @@ def build_single_stage(work_dir, llvm_dir, plat, config, install_dir, clean):
     configure_cmake(llvm_dir, build_dir, install_dir, plat, config)
 
     unbuffered_print(f"\n=== Building {config} ===")
-    build_ninja(build_dir)
+    run_cmd(["ninja", "-C", str(build_dir), "install-distribution"])
 
 
 def test_toolchain(install_dir, plat):
