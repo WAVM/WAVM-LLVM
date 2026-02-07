@@ -25,6 +25,8 @@ set(LLVM_DISTRIBUTION_COMPONENTS
     llvm-libraries
     cmake-exports
     clang-format
+    llvm-profdata
+    llvm-cov
     builtins
     runtimes
     CACHE STRING "")
