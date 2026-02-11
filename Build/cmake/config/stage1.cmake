@@ -3,8 +3,9 @@
 
 set(CMAKE_BUILD_TYPE Release CACHE STRING "")
 set(LLVM_ENABLE_PROJECTS "clang;lld" CACHE STRING "")
+set(LLVM_ENABLE_RUNTIMES "compiler-rt" CACHE STRING "")
 
-# Only build/install the minimal toolchain needed to compile stage 2.
+# Build/install the toolchain plus compiler-rt runtimes (needed for sanitizer builds).
 set(LLVM_DISTRIBUTION_COMPONENTS
     clang
     clang-resource-headers
@@ -13,4 +14,8 @@ set(LLVM_DISTRIBUTION_COMPONENTS
     llvm-ranlib
     llvm-libtool-darwin
     llvm-lib
+    llvm-tblgen
+    clang-tblgen
+    builtins
+    runtimes
     CACHE STRING "")

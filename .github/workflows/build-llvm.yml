@@ -18,8 +18,8 @@ env:
   WORK_DIR: '.'
 
 jobs:
-  # LTO Stage 1: Build bootstrap toolchain
-  lto-stage1:
+  # Stage 1: Build bootstrap toolchain for each runner platform
+  stage1:
     strategy:
       fail-fast: false
       matrix:
@@ -29,6 +29,7 @@ jobs:
             runs_on: ubuntu-latest
             container: ghcr.io/wavm/builder-linux-x64:latest
             artifact_suffix: linux-x64
+            cross_sysroot: /sysroot-aarch64
           - os: macos
             runs_on: macos-latest
             artifact_suffix: macos-arm64
@@ -44,131 +45,111 @@ jobs:
         if: matrix.os == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
 
-      - name: Build LTO Stage 1
-        run: python3 build-llvm.py --config LTO-stage1 --platform ${{ matrix.os }} --work-dir ${{ env.WORK_DIR }}
+      - name: Build Stage 1
+        run: >-
+          python3 build-llvm.py --config stage1 --work-dir ${{ env.WORK_DIR }}
+          ${{ matrix.cross_sysroot && format('--cross-sysroot {0}', matrix.cross_sysroot) || '' }}
 
-      - name: Upload stage 1 install
+      - name: Upload stage 1 build
         uses: actions/upload-artifact@v4
         with:
-          name: lto-stage1-${{ matrix.artifact_suffix }}
-          path: ${{ env.WORK_DIR }}/install-LTO-stage1/
+          name: stage1-${{ matrix.artifact_suffix }}
+          path: |
+            ${{ env.WORK_DIR }}/build-stage1/bin/
+            ${{ env.WORK_DIR }}/build-stage1/lib/
+            ${{ env.WORK_DIR }}/build-stage1/.wavm-llvm-build
           include-hidden-files: true
           retention-days: 1
 
-  # LTO Stage 2: Build with LTO using stage 1 toolchain
-  lto-stage2:
-    needs: lto-stage1
+  # Stage 2: Build all configurations using stage 1 toolchain
+  build:
+    needs: stage1
     strategy:
       fail-fast: false
       matrix:
         os: [linux, macos, windows]
+        arch: [x64, arm64]
+        config: [LTO, Debug, RelWithDebInfo, Checked, Sanitized]
         include:
+          # Per-OS settings (merged into all combos for that OS)
           - os: linux
             runs_on: ubuntu-latest
             container: ghcr.io/wavm/builder-linux-x64:latest
-            artifact_suffix: linux-x64
+            stage1_suffix: linux-x64
+            cross_sysroot: /sysroot-aarch64
             archive_ext: tar.xz
             archive_cmd: 'tar -cJf'
           - os: macos
             runs_on: macos-latest
-            artifact_suffix: macos-arm64
+            stage1_suffix: macos-arm64
             archive_ext: tar.xz
             archive_cmd: 'tar -cJf'
           - os: windows
             runs_on: windows-latest
-            artifact_suffix: windows-x64
+            stage1_suffix: windows-x64
             archive_ext: zip
             archive_cmd: '7z a -tzip'
+          # Windows MSVC arch selection
+          - os: windows
+            arch: x64
+            msvc_arch: amd64
+          - os: windows
+            arch: arm64
+            msvc_arch: amd64_arm64
+        exclude:
+          # compiler-rt limits ASan to x86/x86_64 on Windows
+          # (AllSupportedArchDefs.cmake), and the standalone UBSan runtime has a
+          # CRT mismatch (/MT vs /MD), so Sanitized can't build for ARM64.
+          - os: windows
+            arch: arm64
+            config: Sanitized
     runs-on: ${{ matrix.runs_on }}
     container: ${{ matrix.container || null }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download stage 1 install
+      - name: Download stage 1 build
         uses: actions/download-artifact@v4
         with:
-          name: lto-stage1-${{ matrix.artifact_suffix }}
-          path: ${{ env.WORK_DIR }}/install-LTO-stage1/
+          name: stage1-${{ matrix.stage1_suffix }}
+          path: ${{ env.WORK_DIR }}/build-stage1/
 
       - name: Restore execute permissions
         if: matrix.os != 'windows'
-        run: chmod +x ${{ env.WORK_DIR }}/install-LTO-stage1/bin/*
+        run: chmod +x ${{ env.WORK_DIR }}/build-stage1/bin/*
 
       - name: Setup MSVC
         if: matrix.os == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Build LTO Stage 2
-        run: python3 build-llvm.py --config LTO --platform ${{ matrix.os }} --work-dir ${{ env.WORK_DIR }} --install-dir ${{ env.WORK_DIR }}/install --test
-
-      - name: Create archive
-        run: |
-          cd ${{ env.WORK_DIR }}/install
-          ${{ matrix.archive_cmd }} ../llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-LTO.${{ matrix.archive_ext }} .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
         with:
-          name: llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-LTO
-          path: ${{ env.WORK_DIR }}/llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-LTO.${{ matrix.archive_ext }}
-          include-hidden-files: true
-          retention-days: 7
-
-  # Non-LTO builds
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [linux, macos, windows]
-        config: [Debug, RelWithDebInfo, Checked, Sanitized]
-        exclude:
-          - os: windows
-            config: Sanitized
-        include:
-          - os: linux
-            runs_on: ubuntu-latest
-            container: ghcr.io/wavm/builder-linux-x64:latest
-            artifact_suffix: linux-x64
-            archive_ext: tar.xz
-            archive_cmd: 'tar -cJf'
-          - os: macos
-            runs_on: macos-latest
-            artifact_suffix: macos-arm64
-            archive_ext: tar.xz
-            archive_cmd: 'tar -cJf'
-          - os: windows
-            runs_on: windows-latest
-            artifact_suffix: windows-x64
-            archive_ext: zip
-            archive_cmd: '7z a -tzip'
-    runs-on: ${{ matrix.runs_on }}
-    container: ${{ matrix.container || null }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup MSVC
-        if: matrix.os == 'windows'
-        uses: ilammy/msvc-dev-cmd@v1
+          arch: ${{ matrix.msvc_arch }}
 
       - name: Build LLVM
-        run: python3 build-llvm.py --config ${{ matrix.config }} --platform ${{ matrix.os }} --work-dir ${{ env.WORK_DIR }} --install-dir ${{ env.WORK_DIR }}/install
+        run: >-
+          python3 build-llvm.py
+          --config ${{ matrix.config }}
+          --target-arch ${{ matrix.arch }}
+          --work-dir ${{ env.WORK_DIR }}
+          --install-dir ${{ env.WORK_DIR }}/install-${{ matrix.config }}-${{ matrix.arch }}
+          ${{ matrix.config == 'LTO' && '--test' || '' }}
+          ${{ matrix.cross_sysroot && format('--cross-sysroot {0}', matrix.cross_sysroot) || '' }}
 
       - name: Create archive
         run: |
-          cd ${{ env.WORK_DIR }}/install
-          ${{ matrix.archive_cmd }} ../llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-${{ matrix.config }}.${{ matrix.archive_ext }} .
+          cd ${{ env.WORK_DIR }}/install-${{ matrix.config }}-${{ matrix.arch }}
+          ${{ matrix.archive_cmd }} ../llvm-${{ env.LLVM_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.config }}.${{ matrix.archive_ext }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-${{ matrix.config }}
-          path: ${{ env.WORK_DIR }}/llvm-${{ env.LLVM_VERSION }}-${{ matrix.artifact_suffix }}-${{ matrix.config }}.${{ matrix.archive_ext }}
+          name: llvm-${{ env.LLVM_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.config }}
+          path: ${{ env.WORK_DIR }}/llvm-${{ env.LLVM_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.config }}.${{ matrix.archive_ext }}
           include-hidden-files: true
           retention-days: 7
 
   # Create GitHub release
   release:
-    needs: [lto-stage2, build]
+    needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/')
     runs-on: ubuntu-latest
     permissions:
