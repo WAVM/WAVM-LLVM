@@ -1,7 +1,7 @@
 # Builds LLVM with ThinLTO.
 
 set(CMAKE_BUILD_TYPE Release CACHE STRING "")
-set(LLVM_ENABLE_PROJECTS "clang;lld" CACHE STRING "")
+set(LLVM_ENABLE_PROJECTS "clang;clang-tools-extra;lld" CACHE STRING "")
 set(LLVM_ENABLE_RUNTIMES "compiler-rt" CACHE STRING "")
 set(LLVM_ENABLE_LTO Thin CACHE STRING "")
 set(LLVM_ENABLE_LLD ON CACHE BOOL "")
@@ -19,6 +19,8 @@ set(LLVM_DISTRIBUTION_COMPONENTS
     llvm-libraries
     cmake-exports
     clang-format
+    clang-tidy
+    clangd
     llvm-tblgen
     clang-tblgen
     llvm-profdata
