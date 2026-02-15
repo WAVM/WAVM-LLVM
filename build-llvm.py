@@ -420,7 +420,12 @@ def ensure_stage1_toolchain(work_dir: Path, llvm_dir: Path, plat: str, clean: bo
         configure_cmake(llvm_dir, build_dir, "stage1", cmake_config)
 
         unbuffered_print("\n=== Building Stage 1 ===")
-        run_cmd(["ninja", "-C", str(build_dir), "distribution"])
+        # Build distribution plus clang-tidy-confusable-chars-gen, which is needed
+        # as a native tool during cross-compilation but isn't a distribution component.
+        # Without this, LLVM falls back to a NATIVE sub-build that fails on Windows
+        # because the MSVC ARM64 environment is inherited.
+        run_cmd(["ninja", "-C", str(build_dir), "distribution",
+                 "clang-tidy-confusable-chars-gen"])
 
         write_build_marker(build_dir, llvm_commit, patches_hash, cmake_hash, "stage1", plat)
 
