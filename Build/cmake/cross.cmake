@@ -21,8 +21,10 @@
 # --- Cross-architecture runtime targets ---
 # Build compiler-rt builtins and runtimes for both host and target architectures.
 # macOS is excluded: Darwin builds both architectures via universal builds.
+# Skipped when tools are disabled: the runtimes build depends on clang targets.
 
-if(DEFINED CROSS_TRIPLE AND NOT DEFINED CROSS_OSX_ARCHITECTURES)
+if(DEFINED CROSS_TRIPLE AND NOT DEFINED CROSS_OSX_ARCHITECTURES
+        AND (NOT DEFINED LLVM_INCLUDE_TOOLS OR LLVM_INCLUDE_TOOLS))
     if(DEFINED CROSS_COMPILER_TRIPLE)
         # Cross build: only build runtimes for the explicit cross target.
         # "default" would redundantly target the same architecture and fails
