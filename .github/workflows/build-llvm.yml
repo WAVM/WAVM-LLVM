@@ -166,14 +166,14 @@ jobs:
       - name: Get release tag
         id: tag
         run: |
-          LLVM_COMMIT=$(cat LLVM_COMMIT)
-          echo "tag=${LLVM_COMMIT:0:12}" >> $GITHUB_OUTPUT
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          echo "tag=${{ env.LLVM_VERSION }}.x-${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: LLVM ${{ env.LLVM_VERSION }} (${{ steps.tag.outputs.tag }})
+          name: ${{ steps.tag.outputs.tag }}
           draft: false
           prerelease: false
           files: artifacts/**/*
