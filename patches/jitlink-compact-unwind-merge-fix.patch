@@ -8,10 +8,10 @@ Subject: [PATCH] Fix JITLink CompactUnwindManager sentinel calculation after mer
 diff --git a/llvm/lib/ExecutionEngine/JITLink/CompactUnwindSupport.h b/llvm/lib/ExecutionEngine/JITLink/CompactUnwindSupport.h
 --- a/llvm/lib/ExecutionEngine/JITLink/CompactUnwindSupport.h
 +++ b/llvm/lib/ExecutionEngine/JITLink/CompactUnwindSupport.h
-@@ -437,6 +437,10 @@ private:
+@@ -455,6 +455,10 @@ private:
        return LHS.Fn->getAddress() < RHS.Fn->getAddress();
      });
-
+ 
 +    // Save the last function symbol before merging removes records.
 +    if (!Records.empty())
 +      LastFn = Records.back().Fn;
@@ -19,23 +19,29 @@ diff --git a/llvm/lib/ExecutionEngine/JITLink/CompactUnwindSupport.h b/llvm/lib/
      // Calculate the number of second-level pages required.
      NumSecondLevelPages = (Records.size() + NumRecordsPerSecondLevelPage - 1) /
                            NumRecordsPerSecondLevelPage;
-@@ -541,8 +545,9 @@ private:
-
+@@ -556,14 +560,15 @@ private:
+ 
      // Write the index array terminator.
      {
 +      // Use the actual last function end, not the last remaining record's end.
        auto FnEndDelta =
 -          Records.back().Fn->getRange().End - CompactUnwindBase->getAddress();
 +          LastFn->getRange().End - CompactUnwindBase->getAddress();
-
+ 
        if (LLVM_UNLIKELY(!isUInt<32>(FnEndDelta)))
          return make_error<JITLinkError>(
-@@ -667,6 +672,7 @@ private:
+             "In " + G.getName() + " " + UnwindInfoSectionName +
+             ", delta to end of functions  " +
+-            formatv("{0:x}", Records.back().Fn->getRange().End) +
++            formatv("{0:x}", LastFn->getRange().End) +
+             " exceeds 32 bits");
+ 
+       cantFail(W.writeInteger<uint32_t>(FnEndDelta));
+@@ -685,6 +690,7 @@ private:
    StringRef EHFrameSectionName;
    Symbol *CompactUnwindBase = nullptr;
    orc::ExecutorAddr EHFrameBase;
 +  Symbol *LastFn = nullptr;
-
+ 
    size_t NumLSDAs = 0;
    size_t NumSecondLevelPages = 0;
-

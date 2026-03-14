@@ -14,7 +14,7 @@ on:
         type: boolean
 
 env:
-  LLVM_VERSION: '21'
+  LLVM_VERSION: '22'
   WORK_DIR: '.'
 
 jobs:
